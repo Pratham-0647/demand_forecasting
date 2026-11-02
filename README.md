@@ -9,9 +9,9 @@ reconciliation across levels and a reorder-point decision layer.
 
 | | Seasonal naive | ETS | ARIMA | **LightGBM (bottom-up)** |
 |---|---:|---:|---:|---:|
-| Mean MASE, 12 levels equally weighted | 1.126 | 0.932 | see Phase 3 | **0.812** |
-| WAPE, total level | 0.087 | 0.064 | 0.071 | **0.049** |
-| WAPE, item × store | 0.875 | 0.741 | 0.731 | 0.761 |
+| Mean MASE, 12 levels equally weighted | 1.126 | 0.932 | 0.959 | **0.812** |
+| WAPE, total level | 0.087 | 0.064 | 0.075 | **0.049** |
+| WAPE, item × store | 0.875 | **0.741** | 0.749 | 0.761 |
 
 - One global LightGBM model trained on all 30,490 series beats every
   per-series statistical model at levels 1–9 by a wide margin. At the
@@ -152,28 +152,34 @@ to d_1914–d_1941. Never a single split, never shuffled. Full tables are in
 
 | Level | sNaive | ETS | ARIMA | LightGBM | | WAPE sNaive | WAPE ETS | WAPE LightGBM |
 |---|---:|---:|---:|---:|---|---:|---:|---:|
-| 1 Total | 1.149 | 0.853 | † | **0.642** | | 0.087 | 0.064 | **0.049** |
-| 2 State | 1.072 | 0.875 | † | **0.670** | | 0.095 | 0.078 | **0.060** |
-| 3 Store | 1.091 | 0.898 | † | **0.780** | | 0.107 | 0.088 | **0.073** |
-| 4 Category | 1.090 | 0.844 | † | **0.670** | | 0.096 | 0.074 | **0.057** |
-| 5 Department | 1.257 | 1.122 | † | **0.823** | | 0.108 | 0.091 | **0.067** |
-| 6 State × Cat | 1.051 | 0.854 | † | **0.732** | | 0.110 | 0.091 | **0.070** |
-| 7 State × Dept | 1.178 | 1.040 | † | **0.841** | | 0.124 | 0.108 | **0.083** |
-| 8 Store × Cat | 1.070 | 0.866 | † | **0.811** | | 0.128 | 0.106 | **0.089** |
-| 9 Store × Dept | 1.179 | 1.000 | † | **0.891** | | 0.149 | 0.127 | **0.107** |
-| 10 Item | 1.102 | **0.883** | † | 0.905 | | 0.387 | **0.325** | 0.337 |
-| 11 State × Item | 1.115 | **0.912** | † | 0.932 | | 0.576 | **0.474** | 0.487 |
-| 12 Item × Store | 1.153 | **1.032** | † | 1.051 | | 0.875 | **0.741** | 0.761 |
-| **Avg of 12** | 1.126 | 0.932 | † | **0.812** | | 0.237 | 0.197 | **0.187** |
+| 1 Total | 1.149 | 0.853 | 0.992 | **0.642** | | 0.087 | 0.064 | **0.049** |
+| 2 State | 1.072 | 0.875 | 0.951 | **0.670** | | 0.095 | 0.078 | **0.060** |
+| 3 Store | 1.091 | 0.898 | 0.955 | **0.780** | | 0.107 | 0.088 | **0.073** |
+| 4 Category | 1.090 | 0.844 | 0.910 | **0.670** | | 0.096 | 0.074 | **0.057** |
+| 5 Department | 1.257 | 1.122 | 1.009 | **0.823** | | 0.108 | 0.091 | **0.067** |
+| 6 State × Cat | 1.051 | 0.854 | 0.879 | **0.732** | | 0.110 | 0.091 | **0.070** |
+| 7 State × Dept | 1.178 | 1.040 | 0.990 | **0.841** | | 0.124 | 0.108 | **0.083** |
+| 8 Store × Cat | 1.070 | 0.866 | 0.949 | **0.811** | | 0.128 | 0.106 | **0.089** |
+| 9 Store × Dept | 1.179 | 1.000 | 1.013 | **0.891** | | 0.149 | 0.127 | **0.107** |
+| 10 Item | 1.102 | **0.883** | 0.912 | 0.905 | | 0.387 | **0.325** | 0.337 |
+| 11 State × Item | 1.115 | **0.912** | 0.925 | 0.932 | | 0.576 | **0.474** | 0.487 |
+| 12 Item × Store | 1.153 | 1.032 | **1.028** | 1.051 | | 0.875 | **0.741** | 0.761 |
+| **Avg of 12** | 1.126 | 0.932 | 0.959 | **0.812** | | 0.237 | 0.197 | **0.187** |
 
-† ARIMA at the three earlier origins was still computing when this was
-written (it is the slowest model, ~2 h per origin). At d_1913 alone, ARIMA
-scores a cross-level MASE of 0.973 vs ETS 0.970. `results/metrics.md` is
-regenerated with all four origins once `run_all.sh` completes.
+By origin (cross-level MASE, d_1829 / d_1857 / d_1885 / d_1913):
 
-By origin (cross-level MASE): LightGBM beats ETS at all four origins
-(0.923 / 0.833 / 0.722 / 0.771 vs 0.943 / 0.877 / 0.937 / 0.970), and both
-beat the seasonal naive (1.04–1.21) every time.
+| Model | d_1829 | d_1857 | d_1885 | d_1913 |
+|---|---:|---:|---:|---:|
+| Seasonal naive | 1.212 | 1.043 | 1.143 | 1.105 |
+| ETS | 0.943 | 0.877 | 0.937 | 0.970 |
+| ARIMA | 1.042 | 0.931 | 0.892 | 0.973 |
+| LightGBM | **0.923** | **0.833** | **0.722** | **0.771** |
+
+LightGBM is best at every origin and every model beats the seasonal naive
+every time. ETS beats ARIMA overall (0.932 vs 0.959) and at three of four
+origins. ARIMA is closest at the bottom levels (item × store MASE 1.028 vs
+1.032) and weaker at aggregate levels, where the restricted order search
+likely costs it most.
 
 ## Phase 4 — Global LightGBM
 
@@ -257,10 +263,10 @@ So 91% of item × store series are intermittent or lumpy. Croston-family
 methods were compared with the other models on them, averaged over 4 origins
 ([`results/intermittent.md`](results/intermittent.md)):
 
-| Intermittent + lumpy series | sNaive | ETS | Croston | SBA | **TSB** | LightGBM |
-|---|---:|---:|---:|---:|---:|---:|
-| Mean MASE | 1.174 | 1.059 | 1.119 | 1.103 | **1.052** | 1.078 |
-| Volume bias | −7.6% | −4.7% | **+1.2%** | −3.9% | −3.5% | −5.1% |
+| Intermittent + lumpy series | sNaive | ETS | ARIMA | Croston | SBA | **TSB** | LightGBM |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Mean MASE | 1.174 | 1.059 | 1.053 | 1.119 | 1.103 | **1.052** | 1.078 |
+| Volume bias | −7.6% | −4.7% | −4.7% | **+1.2%** | −3.9% | −3.5% | −5.1% |
 
 - **TSB** is the most accurate method on intermittent series. It updates
   the *probability* of a sale every period, so it decays towards zero for
@@ -268,7 +274,7 @@ methods were compared with the other models on them, averaged over 4 origins
   when a sale happens.
 - **Croston** has the textbook upward bias (+1.2%). **SBA's** (1 − α/2)
   correction removes it and overshoots slightly (−3.9%), as expected.
-- None of the methods beats ETS by a wide margin: on a 28-day horizon,
+- None of the methods beats ETS or ARIMA by a wide margin: on a 28-day horizon,
   a flat demand-rate forecast is close to what AutoETS converges to on
   sparse series anyway.
 
