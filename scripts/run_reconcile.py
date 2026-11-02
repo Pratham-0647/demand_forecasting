@@ -63,12 +63,17 @@ def main() -> None:
     for origin in origins:
         y_train, y_true = Y[:, :origin], Y[:, origin: origin + HORIZON]
         scale = metrics.mase_scale(y_train)
+        # Point-in-time: freeze the error history *before* this origin. Errors made at
+        # this origin are only added once every method here has run (otherwise
+        # wls_var / mint_shrink would see the very test window they are scored on).
+        past = {k: list(v) for k, v in errors.items()}
+        new_errors: dict[tuple[str, str], np.ndarray] = {}
         for base_set in ["ets", "ets_lgb"]:
             y_hat = stacked_base(origin, ids, base_set)
             if y_hat is None:
                 continue
             for method in METHODS:
-                prior = errors.get((base_set, "base"), [])
+                prior = past.get((base_set, "base"), [])
                 if method in ("wls_var", "mint_shrink") and not prior:
                     continue
                 t0 = time.perf_counter()
@@ -78,17 +83,19 @@ def main() -> None:
                     E = np.hstack(prior) if prior else None
                     y_rec, info = rc.reconcile(y_hat, S, method, levels, errors=E)
                 secs = time.perf_counter() - t0
-                incoh = rc.incoherence(y_rec, S, levels)
+                gap = rc.incoherence(y_rec, S, levels)
+                vol = np.abs(y_rec).sum(axis=1)
                 s_mase = metrics.mase(y_true, y_rec, scale)
                 for lvl in range(1, 13):
                     m = levels == lvl
                     ok = m & np.isfinite(s_mase)
                     rows.append({"origin": origin, "base_set": base_set, "method": method, "level": lvl,
                                  "mase_mean": float(s_mase[ok].mean()), "wape": metrics.wape(y_true[m], y_rec[m]),
-                                 "incoherence": float(incoh[m].mean()), "seconds": secs,
-                                 "lambda": info.get("lambda"), "cg_iterations": info.get("cg_iterations")})
+                                 "incoherence": float(gap[m].sum() / max(vol[m].sum(), 1e-9)), "seconds": secs,
+                                 "lambda": info.get("lambda"), "cg_iterations": info.get("cg_iterations"),
+                                 "negative_share_fixed": info.get("negative_share_fixed")})
                 # Coherent quantiles from this method's own errors at earlier origins.
-                own_prior = errors.get((base_set, method), [])
+                own_prior = past.get((base_set, method), [])
                 if own_prior:
                     E_own = np.hstack(own_prior)
                     for lvl in range(1, 13):
@@ -103,12 +110,18 @@ def main() -> None:
                                 y_true[ok], qf[ok[m]], a, scale[ok]).mean())
                             rec[f"le_{q}"] = metrics.coverage(y_true[m], qf)
                         qrows.append(rec)
-                errors.setdefault((base_set, method), []).append(y_true - y_rec)
+                new_errors[(base_set, method)] = y_true - y_rec
                 print(f"d_{origin} {base_set:8s} {method:12s} {secs:6.1f}s "
                       f"total-WAPE={rows[-12]['wape']:.4f} bottom-MASE={rows[-1]['mase_mean']:.4f} "
                       f"{info.get('lambda', '')}", flush=True)
 
+        for k, e in new_errors.items():
+            errors.setdefault(k, []).append(e)
+
     df = pd.DataFrame(rows)
+    # Leakage guard: covariance-based methods need errors from an *earlier* origin.
+    first = df[df["origin"] == origins[0]]["method"].unique()
+    assert not {"wls_var", "mint_shrink"} & set(first), "error history leaked into the first origin"
     RES_DIR.mkdir(exist_ok=True)
     df.to_csv(RES_DIR / "reconciliation_by_origin.csv", index=False, float_format="%.6f")
 
@@ -125,7 +138,7 @@ def main() -> None:
             continue
         avg = b.groupby(["level", "method"])[["mase_mean", "wape", "incoherence"]].mean().reset_index()
         title = {"ets": "ETS at every level", "ets_lgb": "ETS levels 1-11 + LightGBM bottom level"}[base_set]
-        for col, label in [("incoherence", "Incoherence: mean |y - S·y_bottom| / |y| (0 = coherent)"),
+        for col, label in [("incoherence", "Incoherence: Σ|y - S·y_bottom| / Σ|y| per level (0 = coherent)"),
                            ("mase_mean", "Mean MASE"), ("wape", "WAPE")]:
             t = avg.pivot(index="level", columns="method", values=col)[METHODS].reset_index()
             t.insert(1, "level_name", t["level"].map(LEVEL_NAMES))

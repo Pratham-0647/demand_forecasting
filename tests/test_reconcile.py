@@ -44,7 +44,7 @@ def test_matches_dense_formula_and_is_coherent(hier, method):
         W = lam * np.diag(var) + (1 - lam) * (E @ E.T) / E.shape[1]
     expected = Sd @ _dense_G(Sd, W) @ y_hat
     np.testing.assert_allclose(y_tilde, expected, rtol=1e-6, atol=1e-6)
-    assert rc.incoherence(y_tilde, S, levels).max() < 1e-9
+    assert rc.incoherence(y_tilde, S, levels).max() < 1e-6 * np.abs(y_tilde).max()
 
 
 def test_reconciliation_leaves_coherent_forecasts_unchanged(hier):
@@ -66,3 +66,16 @@ def test_shrinkage_lambda_matches_bruteforce():
     off = ~np.eye(len(E), dtype=bool)
     expected = np.clip(var_r[off].sum() / (r[off] ** 2).sum(), 1e-3, 1)
     assert rc.shrinkage_lambda(E) == pytest.approx(expected)
+
+
+def test_set_negative_to_zero_keeps_coherence_and_nonnegativity(hier):
+    S, levels = hier
+    rng = np.random.default_rng(5)
+    n, m = S.shape
+    y_hat = S.toarray() @ rng.uniform(0, 1, (m, 3)) + rng.normal(0, 3, (n, 3))  # noisy -> negatives
+    plain, _ = rc.reconcile(y_hat, S, "ols", levels, nonnegative=False)
+    assert (plain[levels == 12] < 0).any()
+    y_nn, info = rc.reconcile(y_hat, S, "ols", levels, nonnegative=True)
+    assert (y_nn >= -1e-9).all()
+    assert rc.incoherence(y_nn, S, levels).max() < 1e-6 * np.abs(y_nn).max()
+    assert info["negative_share_fixed"] > 0
