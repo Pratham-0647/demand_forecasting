@@ -24,7 +24,7 @@ from m5fc.data import HORIZON, LEVEL_NAMES, build_hierarchy  # noqa: E402
 
 FC_DIR = ROOT / "outputs" / "forecasts"
 RES_DIR = ROOT / "results"
-POINT_MODELS = ["seasonal_naive", "ets", "arima", "croston", "croston_sba", "tsb", "lightgbm"]
+POINT_MODELS = ["seasonal_naive", "ets", "arima", "croston", "croston_sba", "tsb", "lightgbm", "lightgbm_q50"]
 
 
 def load_forecasts(origin: int, level: int, ids: np.ndarray, models=POINT_MODELS) -> dict[str, np.ndarray]:

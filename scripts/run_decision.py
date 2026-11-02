@@ -41,12 +41,14 @@ LEAD = 7
 SURFACE, INK, INK2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 SERIES = {"lightgbm": "#2a78d6", "naive": "#eb6834"}
 LABELS = {"lightgbm": "LightGBM quantiles", "naive": "Seasonal naive + historical σ"}
+POLICY_INPUTS: dict = {}  # policy -> (mu_L, sigma_L, demand_L, unit_holding), filled in main()
 
 
 def plot(curves: pd.DataFrame, rec: dict, path: Path) -> None:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import matplotlib.ticker  # noqa: F401
 
     fig, ax = plt.subplots(figsize=(8, 5), dpi=150, facecolor=SURFACE)
     ax.set_facecolor(SURFACE)
@@ -57,20 +59,22 @@ def plot(curves: pd.DataFrame, rec: dict, path: Path) -> None:
         last = g.iloc[-1]
         ax.annotate(LABELS[policy], (last["holding_cost_per_week"], last["fill_rate"] * 100),
                     xytext=(6, -2), textcoords="offset points", color=INK2, fontsize=8, va="center")
-        p90 = g.iloc[(g["target_csl"] - 0.9).abs().argmin()]
+        z90 = inv.Z90
+        p90 = inv.evaluate_policy(*POLICY_INPUTS[policy], z90)
         ax.scatter([p90["holding_cost_per_week"]], [p90["fill_rate"] * 100], s=60, facecolor=SURFACE,
                    edgecolor=SERIES[policy], lw=2, zorder=4)
     ax.scatter([rec["holding_cost_per_week"]], [rec["fill_rate"] * 100], s=140, marker="*",
                color=INK, zorder=5)
-    ax.annotate(f"Recommended: target CSL {rec['target_csl']:.1%}\nfill rate {rec['fill_rate']:.1%}, "
+    ax.annotate(f"Recommended: z = {rec['z']:.2f}, achieved CSL {rec['cycle_service_level']:.1%}\nfill rate {rec['fill_rate']:.1%}, "
                 f"${rec['holding_cost_per_week']:,.0f}/week",
-                (rec["holding_cost_per_week"], rec["fill_rate"] * 100), xytext=(-10, -38),
-                textcoords="offset points", ha="right", fontsize=8, color=INK,
+                (rec["holding_cost_per_week"], rec["fill_rate"] * 100),
+                xytext=(rec["holding_cost_per_week"] * 1.12, 88.5), textcoords="data",
+                ha="left", fontsize=8, color=INK,
                 arrowprops=dict(arrowstyle="-", color=INK2, lw=0.8))
-    ax.set_xlabel("Safety-stock holding cost per week, all 30,490 item×store series ($)", color=INK2, fontsize=9)
+    ax.set_xlabel("Safety-stock holding cost per week, all 30,490 item×store series", color=INK2, fontsize=9)
     ax.set_ylabel("Fill rate (%)", color=INK2, fontsize=9)
     ax.set_title("Service level vs. inventory cost — 7-day lead time, d_1914–d_1941\n"
-                 "hollow circle = P90 policy (90% target cycle service level)",
+                 "hollow circle = P90 policy (z = 1.28); star = cost-minimising operating point",
                  color=INK, fontsize=10, loc="left")
     ax.grid(color=GRID, lw=0.6)
     for s in ["top", "right"]:
@@ -79,6 +83,7 @@ def plot(curves: pd.DataFrame, rec: dict, path: Path) -> None:
         ax.spines[s].set_color(GRID)
     ax.tick_params(colors=INK2, labelsize=8)
     ax.legend(frameon=False, fontsize=8, labelcolor=INK2, loc="lower right")
+    ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"${v:,.0f}"))
     xmax = curves["holding_cost_per_week"].max()
     ax.set_xlim(0, xmax * 1.3)
     fig.tight_layout()
@@ -116,6 +121,7 @@ def main() -> None:
 
     rows = []
     for policy in ["lightgbm", "naive"]:
+        POLICY_INPUTS[policy] = (mu[policy], sigma[policy], demand_L, unit_holding)
         for r in inv.sweep(mu[policy], sigma[policy], demand_L, unit_holding):
             rop = np.ceil(np.clip(mu[policy] + r["z"] * sigma[policy], 0, None))
             lost = (np.clip(demand_L - rop, 0, None) * unit_short).sum() / demand_L.shape[1]
@@ -129,23 +135,30 @@ def main() -> None:
     def cost_at(policy, fill):
         g = curves[curves["policy"] == policy].sort_values("fill_rate")
         return float(np.interp(fill, g["fill_rate"], g["holding_cost_per_week"]))
+    # Only fill rates that both curves actually reach (no extrapolation).
+    reach = min(curves.groupby("policy")["fill_rate"].max())
+    fills = [f for f in [0.85, 0.90, 0.925, 0.95, 0.96, 0.97, 0.98] if f <= reach]
     compare = pd.DataFrame([{"fill_rate_target": f, "lightgbm_cost": cost_at("lightgbm", f),
-                             "naive_cost": cost_at("naive", f)} for f in [0.90, 0.95, 0.97, 0.98]])
+                             "naive_cost": cost_at("naive", f)} for f in fills])
     compare["saving_pct"] = 1 - compare["lightgbm_cost"] / compare["naive_cost"]
 
     RES_DIR.mkdir(exist_ok=True)
     curves.to_csv(RES_DIR / "decision_curve.csv", index=False, float_format="%.5f")
     plot(curves, rec, RES_DIR / "service_level_vs_cost.png")
-    cols = ["target_csl", "cycle_service_level", "fill_rate", "safety_stock_units",
+    cols = ["z", "target_csl", "cycle_service_level", "fill_rate", "safety_stock_units",
             "holding_cost_per_week", "lost_margin_per_week", "total_cost_per_week"]
     md = [
         f"# Decision layer — reorder points at origin d_{o} (7-day lead time)\n",
         f"Assumptions: holding cost {HOLDING_RATE:.0%} of sell price per year; lost sale costs "
         f"{MARGIN:.0%} margin; costs in $ per week summed over all 30,490 series.\n",
-        f"**Recommended operating point (min holding + lost margin, LightGBM):** target CSL "
-        f"{rec['target_csl']:.1%} -> achieved CSL {rec['cycle_service_level']:.1%}, fill rate "
+        f"**Recommended operating point (min holding + lost margin, LightGBM):** z = {rec['z']:.2f} "
+        f"(nominal CSL {rec['target_csl']:.2%}) -> achieved CSL {rec['cycle_service_level']:.1%}, fill rate "
         f"{rec['fill_rate']:.1%}, holding ${rec['holding_cost_per_week']:,.0f}/week, lost margin "
         f"${rec['lost_margin_per_week']:,.0f}/week.\n",
+        "Achieved cycle service level falls short of the target at high targets: summing daily "
+        "variances assumes independent days, but retail demand is positively autocorrelated, so the "
+        "lead-time sigma is understated. The curve is still the right decision tool — read service "
+        "off the achieved column, not the target.\n",
         "## LightGBM quantile policy\n", to_markdown(lg[cols], 3),
         "\n## Seasonal naive + historical sigma policy\n", to_markdown(curves[curves["policy"] == "naive"][cols], 3),
         "\n## Holding cost to reach the same fill rate\n", to_markdown(compare, 3),
