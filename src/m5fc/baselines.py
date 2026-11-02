@@ -71,6 +71,13 @@ MODELS = {
 }
 
 
+def all_models() -> dict:
+    """Phase 1 baselines plus the Phase 6 intermittent-demand methods."""
+    from .intermittent import MODELS as INTERMITTENT
+
+    return {**MODELS, **INTERMITTENT}
+
+
 def forecast_frame(h: Hierarchy, fc: np.ndarray, model: str, origin_date: pd.Timestamp) -> pd.DataFrame:
     """Wide forecast table: one row per series, columns F1..F{horizon}."""
     cols = {f"F{i + 1}": fc[:, i] for i in range(fc.shape[1])}

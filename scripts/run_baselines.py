@@ -35,7 +35,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--origin", type=int, default=1913,
                    help="Number of training days; forecasts cover the next 28 (default: d_1914-d_1941).")
-    p.add_argument("--models", nargs="+", default=list(baselines.MODELS), choices=list(baselines.MODELS))
+    p.add_argument("--models", nargs="+", default=list(baselines.MODELS), choices=list(baselines.all_models()))
     p.add_argument("--levels", nargs="+", type=int, default=[lvl for lvl, _, _ in LEVELS])
     p.add_argument("--max-train-days", type=int, default=730,
                    help="ETS/ARIMA fit on at most this many recent days (seasonal naive needs only 7).")
@@ -54,7 +54,7 @@ def main() -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     for model in args.models:
-        fn = baselines.MODELS[model]
+        fn = baselines.all_models()[model]
         for lvl in args.levels:
             path = OUT_DIR / f"origin_{args.origin}" / model / f"level_{lvl:02d}.parquet"
             if path.exists() and not args.force:
