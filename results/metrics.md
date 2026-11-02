@@ -16,9 +16,9 @@ Each origin trains on every day before it (expanding window); numbers are means 
 | 7 | state_department | 1.183 | 1.054 | 1.042 |
 | 8 | store_category | 0.994 | 0.863 | 0.932 |
 | 9 | store_department | 1.150 | 0.995 | 1.030 |
-| 10 | item | 1.104 | 0.879 |  |
-| 11 | state_item | 1.132 | 0.920 |  |
-| 12 | item_store | 1.175 | 1.034 |  |
+| 10 | item | 1.104 | 0.879 | 0.914 |
+| 11 | state_item | 1.132 | 0.920 | 0.933 |
+| 12 | item_store | 1.175 | 1.034 | 1.036 |
 
 ## WAPE by level (volume-weighted)
 
@@ -33,9 +33,9 @@ Each origin trains on every day before it (expanding window); numbers are means 
 | 7 | state_department | 0.106 | 0.100 | 0.101 |
 | 8 | store_category | 0.114 | 0.103 | 0.107 |
 | 9 | store_department | 0.132 | 0.118 | 0.126 |
-| 10 | item | 0.364 | 0.300 |  |
-| 11 | state_item | 0.555 | 0.451 |  |
-| 12 | item_store | 0.862 | 0.721 |  |
+| 10 | item | 0.364 | 0.300 | 0.317 |
+| 11 | state_item | 0.555 | 0.451 | 0.463 |
+| 12 | item_store | 0.862 | 0.721 | 0.731 |
 
 ## Share of series where the model beats seasonal naive on MASE
 
@@ -50,9 +50,9 @@ Each origin trains on every day before it (expanding window); numbers are means 
 | 7 | state_department | 0.000 | 0.714 | 0.667 |
 | 8 | store_category | 0.000 | 0.833 | 0.733 |
 | 9 | store_department | 0.000 | 0.814 | 0.729 |
-| 10 | item | 0.000 | 0.901 |  |
-| 11 | state_item | 0.000 | 0.826 |  |
-| 12 | item_store | 0.000 | 0.644 |  |
+| 10 | item | 0.000 | 0.901 | 0.839 |
+| 11 | state_item | 0.000 | 0.826 | 0.801 |
+| 12 | item_store | 0.000 | 0.644 | 0.631 |
 
 ## Cross-level average (12 levels weighted equally)
 
@@ -60,6 +60,7 @@ Each origin trains on every day before it (expanding window); numbers are means 
 |---|---|---|
 | seasonal_naive | 1.105 | 0.224 |
 | ets | 0.970 | 0.192 |
+| arima | 0.973 | 0.196 |
 
 ## Coverage (which origins and levels each model was run on)
 
@@ -67,4 +68,4 @@ Each origin trains on every day before it (expanding window); numbers are means 
 |---|---|---|
 | seasonal_naive | 1913 | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 |
 | ets | 1913 | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 |
-| arima | 1913 | 1, 2, 3, 4, 5, 6, 7, 8, 9 |
+| arima | 1913 | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 |
