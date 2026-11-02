@@ -122,3 +122,34 @@ def overall(summary: pd.DataFrame) -> pd.DataFrame:
     out = summary.groupby("model", sort=False)[cols].mean().reset_index()
     out.insert(0, "level", "avg(1-12)")
     return out
+
+
+# --- Phase 5: probabilistic metrics -------------------------------------------
+
+def pinball(y_true: np.ndarray, q_pred: np.ndarray, alpha: float) -> np.ndarray:
+    """Per-series mean pinball (quantile) loss at level ``alpha``.
+
+    Under-forecasting costs alpha per unit and over-forecasting (1 - alpha); the
+    expected loss is minimised by the true alpha-quantile.
+    """
+    diff = np.asarray(y_true, float) - np.asarray(q_pred, float)
+    return np.maximum(alpha * diff, (alpha - 1) * diff).mean(axis=1)
+
+
+def scaled_pinball(y_true, q_pred, alpha, scale) -> np.ndarray:
+    """Pinball loss divided by the MASE scale, so it averages across series (cf. M5 SPL)."""
+    return pinball(y_true, q_pred, alpha) / scale
+
+
+def coverage(y_true: np.ndarray, q_pred: np.ndarray) -> float:
+    """Share of observations at or below the quantile forecast — should equal alpha.
+
+    Ties at zero count as covered: for a series that is zero 80% of the time any
+    quantile up to 0.8 is legitimately 0, and y = 0 <= 0.
+    """
+    return float((np.asarray(y_true) <= np.asarray(q_pred) + 1e-9).mean())
+
+
+def interval_coverage(y_true, lo, hi) -> float:
+    y_true = np.asarray(y_true)
+    return float(((y_true >= np.asarray(lo) - 1e-9) & (y_true <= np.asarray(hi) + 1e-9)).mean())
