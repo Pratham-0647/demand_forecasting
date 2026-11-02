@@ -43,3 +43,19 @@ def test_ets_and_arima_shapes_and_nonnegative():
         assert np.isfinite(fc).all() and (fc >= 0).all()
         # A strongly weekly series should be forecast close to its weekly pattern.
         assert np.abs(fc[0, :7] - week).mean() < 1.5
+
+
+def test_intermittent_methods_and_classification():
+    from m5fc import intermittent
+
+    rng = np.random.default_rng(3)
+    sparse_series = (rng.random(200) < 0.2) * rng.integers(1, 4, 200)
+    smooth = rng.poisson(20, 200)
+    h = _hier(np.vstack([sparse_series, smooth]))
+    cls = intermittent.classify(h.Y)
+    assert cls.loc[0, "adi"] > intermittent.ADI_CUT and cls.loc[1, "sbc_class"] == "smooth"
+    for fn in intermittent.MODELS.values():
+        fc = fn(h, n_jobs=1)
+        assert fc.shape == (2, 28) and (fc >= 0).all()
+        # Flat forecast near the mean demand rate.
+        assert abs(fc[0].mean() - sparse_series.mean()) < 0.5
