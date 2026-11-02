@@ -1,8 +1,11 @@
-"""Phase 2: score saved forecasts with MASE and WAPE at every hierarchy level.
+"""Phases 2-3: score saved point forecasts with MASE and WAPE at every hierarchy
+level and every rolling origin, then average across origins.
 
-    python scripts/evaluate.py                 # origin 1913 (d_1914-d_1941)
+    python scripts/evaluate.py                                  # every origin found
+    python scripts/evaluate.py --origins 1913
 
-Writes results/metrics_origin_<origin>.csv and .md.
+Writes results/metrics_by_origin.csv (one row per origin x level x model) and
+results/metrics.md (tables averaged over origins).
 """
 from __future__ import annotations
 
@@ -21,81 +24,102 @@ from m5fc.data import HORIZON, LEVEL_NAMES, build_hierarchy  # noqa: E402
 
 FC_DIR = ROOT / "outputs" / "forecasts"
 RES_DIR = ROOT / "results"
-MODEL_ORDER = ["seasonal_naive", "ets", "arima"]
+POINT_MODELS = ["seasonal_naive", "ets", "arima", "croston", "croston_sba", "tsb", "lightgbm"]
 
 
-def load_forecasts(origin: int, level: int, ids: pd.Series) -> dict[str, np.ndarray]:
+def load_forecasts(origin: int, level: int, ids: np.ndarray, models=POINT_MODELS) -> dict[str, np.ndarray]:
     out = {}
-    for model_dir in sorted((FC_DIR / f"origin_{origin}").glob("*/")):
-        path = model_dir / f"level_{level:02d}.parquet"
+    for model in models:
+        path = FC_DIR / f"origin_{origin}" / model / f"level_{level:02d}.parquet"
         if not path.exists():
             continue
-        df = pd.read_parquet(path).set_index("unique_id").reindex(ids.to_numpy())
-        if df.isna().any().any():
+        df = pd.read_parquet(path).set_index("unique_id").reindex(ids)
+        cols = [f"F{i + 1}" for i in range(HORIZON)]
+        if df[cols].isna().any().any():
             raise ValueError(f"{path} does not cover every series of level {level}")
-        out[model_dir.name] = df[[f"F{i + 1}" for i in range(HORIZON)]].to_numpy(float)
-    order = {m: i for i, m in enumerate(MODEL_ORDER)}
-    return dict(sorted(out.items(), key=lambda kv: order.get(kv[0], 99)))
+        out[model] = df[cols].to_numpy(float)
+    return out
 
 
-def to_markdown(df: pd.DataFrame) -> str:
+def to_markdown(df: pd.DataFrame, digits: int = 3) -> str:
     def fmt(v):
-        return f"{v:.3f}" if isinstance(v, float) else str(v)
-    lines = ["| " + " | ".join(df.columns) + " |", "|" + "---|" * len(df.columns)]
+        if isinstance(v, (float, np.floating)):
+            return "" if np.isnan(v) else f"{v:.{digits}f}"
+        return str(v)
+    lines = ["| " + " | ".join(map(str, df.columns)) + " |", "|" + "---|" * len(df.columns)]
     lines += ["| " + " | ".join(fmt(v) for v in row) + " |" for row in df.itertuples(index=False)]
     return "\n".join(lines)
 
 
+def find_origins() -> list[int]:
+    return sorted(int(p.name.split("_")[1]) for p in FC_DIR.glob("origin_*") if p.is_dir())
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--origin", type=int, default=1913)
+    p.add_argument("--origins", nargs="+", type=int, default=None)
     args = p.parse_args()
+    origins = args.origins or find_origins()
 
     hier = build_hierarchy()
-    y_train_all = hier.Y[:, : args.origin]
-    y_true_all = hier.Y[:, args.origin : args.origin + HORIZON]
-
-    summaries, zero_share = [], {}
-    for lvl in sorted(hier.ids["level"].unique()):
-        mask = (hier.ids["level"] == lvl).to_numpy()
-        fcs = load_forecasts(args.origin, lvl, hier.ids.loc[mask, "unique_id"])
-        if not fcs:
-            continue
-        zero_share[lvl] = metrics.zero_actual_share(y_true_all[mask])
-        s, _ = metrics.evaluate_level(y_train_all[mask], y_true_all[mask], fcs, lvl)
-        summaries.append(s)
-    summary = pd.concat(summaries, ignore_index=True)
-
-    # Average across levels only over levels that every model has been scored on.
-    complete = summary.groupby("level")["model"].nunique() == summary["model"].nunique()
-    full = summary[summary["level"].isin(complete[complete].index)]
-    ov = metrics.overall(full)
-
-    summary.insert(1, "level_name", summary["level"].map(LEVEL_NAMES))
+    rows = []
+    for origin in origins:
+        y_train_all = hier.Y[:, :origin]
+        y_true_all = hier.Y[:, origin: origin + HORIZON]
+        for lvl in range(1, 13):
+            mask = (hier.ids["level"] == lvl).to_numpy()
+            fcs = load_forecasts(origin, lvl, hier.ids.loc[mask, "unique_id"].to_numpy())
+            if not fcs:
+                continue
+            s, _ = metrics.evaluate_level(y_train_all[mask], y_true_all[mask], fcs, lvl)
+            s.insert(0, "origin", origin)
+            rows.append(s)
+    by_origin = pd.concat(rows, ignore_index=True)
+    by_origin.insert(2, "level_name", by_origin["level"].map(LEVEL_NAMES))
     RES_DIR.mkdir(exist_ok=True)
-    stem = RES_DIR / f"metrics_origin_{args.origin}"
-    summary.to_csv(stem.with_suffix(".csv"), index=False)
+    by_origin.to_csv(RES_DIR / "metrics_by_origin.csv", index=False, float_format="%.5f")
 
-    start = hier.dates[args.origin].date()
-    end = hier.dates[args.origin + HORIZON - 1].date()
-    pivot = lambda col: (summary.pivot(index=["level", "level_name"], columns="model", values=col)  # noqa: E731
-                         [[m for m in MODEL_ORDER if m in summary["model"].unique()]].reset_index())
+    # A model's numbers are averaged only over origins where it exists at that level;
+    # n_origins in the table makes the coverage explicit.
+    avg = (by_origin.groupby(["level", "level_name", "model"], sort=False)
+           .agg(n_origins=("origin", "nunique"), mase_mean=("mase_mean", "mean"),
+                wape=("wape", "mean"), share_beats_snaive=("share_beats_snaive", "mean"))
+           .reset_index())
+    models = [m for m in POINT_MODELS if m in set(avg["model"])]
+    full_models = [m for m in models
+                   if avg.loc[avg["model"] == m, "level"].nunique() == 12
+                   and (avg.loc[avg["model"] == m, "n_origins"] == len(origins)).all()]
+
+    def pivot(col):
+        t = avg.pivot(index=["level", "level_name"], columns="model", values=col)
+        return t[[m for m in models if m in t.columns]].reset_index()
+
+    cross = (avg[avg["model"].isin(full_models)].groupby("model", sort=False)[["mase_mean", "wape"]]
+             .mean().reindex(full_models).reset_index())
+    cov = (by_origin.groupby("model")["origin"].apply(lambda s: ", ".join(map(str, sorted(s.unique()))))
+           .reindex(models).reset_index().rename(columns={"origin": "origins"}))
+    cov["levels"] = [", ".join(map(str, sorted(avg.loc[avg["model"] == m, "level"].unique()))) for m in models]
+
+    dates = hier.dates
+    windows = ", ".join(f"d_{o + 1}-d_{o + HORIZON} ({dates[o].date()} to {dates[o + HORIZON - 1].date()})"
+                        for o in origins)
     md = [
-        f"# Baseline metrics — origin d_{args.origin}, forecasting {start} to {end} (28 days)\n",
-        f"Levels in the cross-level average: {len(complete[complete])} of 12.\n",
-        "## Mean MASE by level (lower is better; scale = in-sample seasonal naive, lag 7)\n",
+        "# Point-forecast accuracy — rolling origin, expanding window\n",
+        f"Origins: {len(origins)}; 28-day test windows: {windows}.",
+        "Each origin trains on every day before it (expanding window); numbers are means over origins.\n",
+        "## Mean MASE by level (scale: in-sample seasonal naive, lag 7; lower is better)\n",
         to_markdown(pivot("mase_mean")),
         "\n## WAPE by level (volume-weighted)\n",
         to_markdown(pivot("wape")),
-        "\n## Share of series where the model beats seasonal naive (MASE)\n",
+        "\n## Share of series where the model beats seasonal naive on MASE\n",
         to_markdown(pivot("share_beats_snaive")),
-        "\n## Cross-level average (each level weighted equally)\n",
-        to_markdown(ov.drop(columns="level")),
-        "\n## Zero actuals in the test window (why MAPE is unusable)\n",
-        to_markdown(pd.DataFrame({"level": list(zero_share), "zero_share": list(zero_share.values())})),
+        "\n## Cross-level average (12 levels weighted equally)\n",
+        to_markdown(cross),
+        "\n## Coverage (which origins and levels each model was run on)\n",
+        to_markdown(cov),
         "",
     ]
-    stem.with_suffix(".md").write_text("\n".join(md))
+    (RES_DIR / "metrics.md").write_text("\n".join(md))
     print("\n".join(md))
 
 
