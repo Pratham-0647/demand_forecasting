@@ -157,9 +157,11 @@ def main() -> None:
         cols = ["spl_q10", "spl_q50", "spl_q90", "le_q10", "le_q50", "le_q90"]
         qmd = ["# Coherent P10/P50/P90 at every level\n",
                f"Origin d_{last}. Quantile = reconciled point forecast + empirical quantile of that method's "
-               "own errors at earlier origins (per series, pooled over horizons). Because every quantile is "
-               "built on the reconciled point forecast, the P50 forecasts are coherent across levels by "
-               "construction; the P10/P90 offsets are per series.\n"]
+               "own errors at earlier origins (per series, pooled over horizons). The centre of every "
+               "distribution is the coherent reconciled forecast; the quantiles themselves are not additive "
+               "and should not be (a quantile of a sum is not the sum of quantiles). Caveat: at aggregate "
+               "levels the 28 errors of one origin are strongly autocorrelated, so 3 prior origins are "
+               "effectively ~3 independent draws and the intervals under-cover when a window shifts level.\n"]
         for base_set in ql["base_set"].unique():
             for method in ["mint_shrink", "wls_struct", "bu"]:
                 t = ql[(ql["base_set"] == base_set) & (ql["method"] == method)]
