@@ -59,6 +59,7 @@ def evaluate_policy(
     }
 
 
-def sweep(mu_L, sigma_L, demand_L, unit_holding, targets=None) -> list[dict]:
-    targets = targets if targets is not None else [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.925, 0.95, 0.97, 0.98, 0.99, 0.995]
-    return [evaluate_policy(mu_L, sigma_L, demand_L, unit_holding, float(norm.ppf(t))) for t in targets]
+def sweep(mu_L, sigma_L, demand_L, unit_holding, z_values=None) -> list[dict]:
+    """Score a grid of safety factors z (target CSL = Phi(z)); default z = 0, 0.25, ..., 5."""
+    z_values = z_values if z_values is not None else np.arange(0, 5.01, 0.25)
+    return [evaluate_policy(mu_L, sigma_L, demand_L, unit_holding, float(z)) for z in z_values]
