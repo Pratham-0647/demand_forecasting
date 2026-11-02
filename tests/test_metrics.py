@@ -63,3 +63,20 @@ def test_evaluate_level_perfect_forecast_and_reference():
     assert per_series.shape == (4, 2)
     ov = metrics.overall(pd.concat([summary, summary.assign(level=4)]))
     assert list(ov["model"]) == ["seasonal_naive", "oracle"]
+
+
+def test_pinball_and_coverage():
+    y = np.array([[0.0, 10.0]])
+    q = np.array([[2.0, 2.0]])
+    # alpha=0.9: over by 2 -> 0.1*2, under by 8 -> 0.9*8
+    assert metrics.pinball(y, q, 0.9)[0] == pytest.approx((0.2 + 7.2) / 2)
+    assert metrics.pinball(y, q, 0.5)[0] == pytest.approx(metrics.mae(y, q)[0] / 2)
+    assert metrics.coverage(y, q) == 0.5
+    assert metrics.interval_coverage(y, np.zeros_like(y), q) == 0.5
+
+
+def test_pinball_minimised_by_true_quantile():
+    y = np.random.default_rng(4).exponential(1.0, (1, 20000))
+    losses = {c: metrics.pinball(y, np.full_like(y, c), 0.9)[0] for c in np.linspace(1.5, 3.1, 33)}
+    best = min(losses, key=losses.get)
+    assert abs(best - np.log(10)) < 0.15  # true 0.9-quantile of Exp(1)
