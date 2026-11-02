@@ -1,0 +1,7 @@
+numpy
+pandas
+pyarrow
+scipy
+statsforecast>=2.0
+matplotlib
+pytest
