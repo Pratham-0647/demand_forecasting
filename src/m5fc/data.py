@@ -66,35 +66,38 @@ def load_calendar(data_dir: Path = DATA_DIR) -> pd.DataFrame:
     return cal
 
 
+def summing_matrix(meta: pd.DataFrame, levels: list[int] | None = None) -> tuple[pd.DataFrame, sparse.csr_matrix]:
+    """Ids and sparse 0/1 summing matrix S (n_series x n_bottom) for the requested levels.
+
+    Columns follow the row order of ``meta`` (the sales file), so ``S @ bottom``
+    gives every aggregate series. Rows follow ``LEVELS`` order, keys sorted.
+    """
+    levels = levels or [lvl for lvl, _, _ in LEVELS]
+    id_parts, s_parts = [], []
+    n = len(meta)
+    for lvl, _, cols in LEVELS:
+        if lvl not in levels:
+            continue
+        if not cols:
+            codes, uniques = np.zeros(n, dtype=int), pd.Index(["Total"])
+        else:
+            key = meta[cols].astype(str).agg("_".join, axis=1)
+            codes, uniques = pd.factorize(key, sort=True)
+        s_parts.append(sparse.csr_matrix(
+            (np.ones(n, np.float32), (codes, np.arange(n))), shape=(len(uniques), n)))
+        id_parts.append(pd.DataFrame({"unique_id": "L" + str(lvl) + "/" + pd.Series(uniques).astype(str),
+                                      "level": lvl}))
+    return pd.concat(id_parts, ignore_index=True), sparse.vstack(s_parts).tocsr()
+
+
 def build_hierarchy(levels: list[int] | None = None, data_dir: Path = DATA_DIR) -> Hierarchy:
     """Aggregate the 30,490 bottom series to the requested M5 levels (default: all 12)."""
     meta, bottom = load_sales(data_dir)
     cal = load_calendar(data_dir)
     dates = pd.DatetimeIndex(cal["date"].iloc[: bottom.shape[1]])
-    levels = levels or [lvl for lvl, _, _ in LEVELS]
-
-    id_parts, y_parts = [], []
-    for lvl, _, cols in LEVELS:
-        if lvl not in levels:
-            continue
-        if not cols:
-            keys = pd.Series(["Total"])
-            agg = bottom.sum(axis=0, keepdims=True)
-        else:
-            key = meta[cols].astype(str).agg("_".join, axis=1)
-            codes, uniques = pd.factorize(key, sort=True)
-            # Sparse 0/1 summing matrix: (n_groups x n_bottom) @ bottom.
-            S = sparse.csr_matrix(
-                (np.ones(len(codes)), (codes, np.arange(len(codes)))),
-                shape=(len(uniques), len(codes)),
-            )
-            agg = S @ bottom.astype(np.float64)
-            keys = pd.Series(uniques)
-        id_parts.append(pd.DataFrame({"unique_id": f"L{lvl}/" + keys, "level": lvl}))
-        y_parts.append(agg.astype(np.float32))
-
-    ids = pd.concat(id_parts, ignore_index=True)
-    return Hierarchy(ids, np.vstack(y_parts), dates)
+    ids, S = summing_matrix(meta, levels)
+    Y = (S @ bottom.astype(np.float64)).astype(np.float32)
+    return Hierarchy(ids, Y, dates)
 
 
 def first_nonzero(Y: np.ndarray) -> np.ndarray:
