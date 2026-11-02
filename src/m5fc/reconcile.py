@@ -108,11 +108,65 @@ def precision(method: str, S: sparse.csr_matrix, errors: np.ndarray | None = Non
     raise ValueError(method)
 
 
-def _pcg(apply_A: Callable, b: np.ndarray, diag: np.ndarray, tol=1e-8, max_iter=500) -> tuple[np.ndarray, int]:
-    """Jacobi-preconditioned CG, vectorised over the columns of b."""
+def reconcile(
+    y_hat: np.ndarray,
+    S: sparse.csr_matrix,
+    method: str,
+    levels: np.ndarray | None = None,
+    errors: np.ndarray | None = None,
+    nonnegative: bool = True,
+    max_rounds: int = 10,
+) -> tuple[np.ndarray, dict]:
+    """Reconcile stacked base forecasts y_hat (n x h). Returns (y_tilde, info).
+
+    S must be bottom-first (see ``bottom_first_S``); ``levels`` is required for bu.
+
+    ``nonnegative`` uses the set-negative-to-zero heuristic (Kourentzes &
+    Athanasopoulos 2021): bottom series that come out negative are fixed at zero
+    and the projection is re-solved for the rest, until none are negative.
+    Simply clipping would break the projection: with MinT on M5 a third of the
+    bottom forecasts can come out negative, and clipping them lifted the total
+    forecast by 25%.
+    """
+    y_hat = np.asarray(y_hat, float)
+    info: dict = {"method": method}
+    if method == "bu":
+        b = y_hat[np.flatnonzero(levels == levels.max())]
+        return S @ (np.clip(b, 0, None) if nonnegative else b), info
+
+    L, extra = precision(method, S, errors)
+    info.update(extra)
+    St = S.T.tocsr()
+    S2 = S.multiply(S).T.tocsr()
+    diag = np.maximum(S2 @ L.diag(), 1e-12)
+    rhs_full = St @ L.apply(y_hat)
+    free = np.ones((S.shape[1], y_hat.shape[1]), bool)  # per bottom series and horizon
+    total_iters, rounds = 0, 0
+    while True:
+        def apply_A(v, free=free):
+            return free * (St @ L.apply(S @ (free * v)))
+
+        # Fixed entries have rhs 0 and identity preconditioner, so they stay at 0.
+        b, iters = _pcg_masked(apply_A, free * rhs_full, np.where(free, diag[:, None], 1.0))
+        total_iters += iters
+        rounds += 1
+        neg = free & (b < 0)
+        if not nonnegative or not neg.any() or rounds >= max_rounds:
+            break
+        free &= ~neg
+    if nonnegative:
+        info["negative_share_fixed"] = float(1 - free.mean())
+        b = np.clip(b, 0, None)  # only residual tiny negatives remain after max_rounds
+    info["cg_iterations"] = total_iters
+    info["nonneg_rounds"] = rounds
+    return S @ b, info
+
+
+def _pcg_masked(apply_A, b, diag2d, tol=1e-8, max_iter=500):
+    """CG with a per-column Jacobi preconditioner (diag2d has the shape of b)."""
     x = np.zeros_like(b)
     r = b.copy()
-    z = r / diag[:, None]
+    z = r / diag2d
     p = z.copy()
     rz = (r * z).sum(axis=0)
     bnorm = np.linalg.norm(b, axis=0) + 1e-30
@@ -123,50 +177,18 @@ def _pcg(apply_A: Callable, b: np.ndarray, diag: np.ndarray, tol=1e-8, max_iter=
         r -= alpha * Ap
         if (np.linalg.norm(r, axis=0) / bnorm).max() < tol:
             return x, it
-        z = r / diag[:, None]
+        z = r / diag2d
         rz_new = (r * z).sum(axis=0)
         p = z + (rz_new / np.maximum(rz, 1e-300)) * p
         rz = rz_new
     return x, max_iter
 
 
-def reconcile(
-    y_hat: np.ndarray,
-    S: sparse.csr_matrix,
-    method: str,
-    levels: np.ndarray | None = None,
-    errors: np.ndarray | None = None,
-    nonnegative: bool = True,
-) -> tuple[np.ndarray, dict]:
-    """Reconcile stacked base forecasts y_hat (n x h). Returns (y_tilde, info).
-
-    S must be bottom-first (see ``bottom_first_S``); ``levels`` is required for bu.
-    With ``nonnegative`` the reconciled bottom forecasts are clipped at zero and
-    re-aggregated, which keeps the result coherent.
-    """
-    y_hat = np.asarray(y_hat, float)
-    info: dict = {"method": method}
-    if method == "bu":
-        b = y_hat[np.flatnonzero(levels == levels.max())]
-    else:
-        L, extra = precision(method, S, errors)
-        info.update(extra)
-        St = S.T.tocsr()
-        S2 = S.multiply(S).T.tocsr()  # for the preconditioner diagonal
-
-        def apply_A(v):
-            return St @ L.apply(S @ v)
-
-        diag = np.maximum(S2 @ L.diag(), 1e-12)
-        b, iters = _pcg(apply_A, St @ L.apply(y_hat), diag)
-        info["cg_iterations"] = iters
-    if nonnegative:
-        b = np.clip(b, 0, None)
-    return S @ b, info
-
-
 def incoherence(y: np.ndarray, S: sparse.csr_matrix, levels: np.ndarray) -> np.ndarray:
-    """Per-series |y - S y_bottom| summed over the horizon, relative to |y| — 0 means coherent."""
+    """Per-series sum over the horizon of |y - S y_bottom| (0 = coherent).
+
+    Aggregate it per level and divide by that level's total volume; a per-series
+    ratio explodes for series whose forecast is ~0.
+    """
     b = y[np.flatnonzero(levels == levels.max())]
-    gap = np.abs(y - S @ b).sum(axis=1)
-    return gap / np.maximum(np.abs(y).sum(axis=1), 1e-9)
+    return np.abs(y - S @ b).sum(axis=1)
