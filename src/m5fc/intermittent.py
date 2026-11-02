@@ -12,6 +12,8 @@ coefficient of variation of non-zero sizes; cut-offs ADI 1.32, CV2 0.49.
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
@@ -31,7 +33,8 @@ def classify(y_train: np.ndarray) -> pd.DataFrame:
     n_days = (T - start).clip(min=1)
     adi = np.where(n_nz > 0, n_days / np.maximum(n_nz, 1), np.inf)
     sizes = np.where(nz, y_train, np.nan)
-    with np.errstate(invalid="ignore", divide="ignore"):
+    with np.errstate(invalid="ignore", divide="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # never-sold series: empty slices
         mean = np.nanmean(sizes, axis=1)
         cv2 = np.nanvar(sizes, axis=1) / mean ** 2
     cv2 = np.nan_to_num(cv2, nan=0.0)

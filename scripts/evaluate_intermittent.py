@@ -58,15 +58,22 @@ def main() -> None:
     models = [m for m in POINT_MODELS if m in set(avg["model"])]
     groups = list(dict.fromkeys(avg["group"]))
 
+    # Models run at fewer origins are averaged over different windows: say so in the header.
+    n_orig = df.groupby("model")["origin"].nunique()
+    label = {m: m if n_orig[m] == len(origins) else f"{m} ({n_orig[m]} origin{'s' if n_orig[m] > 1 else ''})"
+             for m in models}
+
     def pivot(col):
-        return avg.pivot(index="group", columns="model", values=col).reindex(groups)[models].reset_index()
+        t = avg.pivot(index="group", columns="model", values=col).reindex(groups)[models]
+        return t.rename(columns=label).reset_index()
 
     classes = pd.DataFrame(class_rows).groupby("class")[["share", "zero_share"]].mean().reindex(CLASS_ORDER).reset_index()
     RES_DIR.mkdir(exist_ok=True)
     df.to_csv(RES_DIR / "intermittent_by_origin.csv", index=False, float_format="%.5f")
     md = [
         "# Intermittent demand — bottom level (30,490 series)\n",
-        f"Origins: {', '.join(f'd_{o}' for o in origins)}; numbers averaged over origins.\n",
+        f"Origins: {', '.join(f'd_{o}' for o in origins)}; numbers averaged over origins. Columns marked "
+        "with an origin count cover fewer windows and are not directly comparable.\n",
         "## Demand classes (Syntetos-Boylan-Croston, on each origin's training window)\n",
         to_markdown(classes),
         "\n## Mean MASE by demand class\n",
